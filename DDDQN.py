@@ -4,24 +4,22 @@ import torch as T
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+from copy import deepcopy
 
 
 class DuelingDeepQNetworkConv(nn.Module):
-    def __init__(self, lr, input_dims, fc1_dims, fc2_dims, n_actions):
-        super(DeepQNetwork, self).__init__()
-        self.input_dims = input_dims
-        self.fc1_dims = fc1_dims
-        self.fc2_dims = fc2_dims
-        self.n_actions = n_actions
+    def __init__(self, lr, n_actions, name, input_dims,chkpt_dir):
+        super(DuelingDeepQNetworkConv, self).__init__()
+        
 
         #if framestack was turned off, this needs to change
-        self.conv1 = nn.Conv2d(4, 32, 8, stride=4)
-        self.conv2 = nn.Conv2d(32, 64, 4, stride=2)
-        self.conv3 = nn.Conv2d(64, 64, 3)
-        self.fc1 = nn.Linear(64*7*7, 256)
+        self.conv1 = nn.Conv2d(4, 32, 8, stride=4,padding = 2)
+        self.conv2 = nn.Conv2d(32, 64, 4, stride=2,padding = 1)
+        self.conv3 = nn.Conv2d(64, 64, 3,stride = 1)
+        self.fc1 = nn.Linear(64*6*2, 512)
 
-        self.A = nn.Linear(256, n_actions)
-        self.V = nn.Linear(256, 1)
+        self.A = nn.Linear(512, n_actions)
+        self.V = nn.Linear(512, 1)
 
         self.optimizer = optim.Adam(self.parameters(), lr=lr)
         self.loss = nn.MSELoss()
@@ -32,12 +30,12 @@ class DuelingDeepQNetworkConv(nn.Module):
     def forward(self, observation):
         
         #observation = T.Tensor(observation).to(self.device)
-        observation = observation.view(-1, 4, 84, 84)
+        observation = observation.view(-1, 4, 64, 32)
         observation = F.relu(self.conv1(observation))
         observation = F.relu(self.conv2(observation))
         observation = F.relu(self.conv3(observation))
 
-        observation = observation.view(-1, 64*7*7)
+        observation = observation.view(-1, 64*6*2)
         observation = F.relu(self.fc1(observation))
         A = self.A(observation)
         V = self.V(observation)
@@ -76,8 +74,9 @@ class DuelingDeepQNetwork(nn.Module):
 
 class Agent():
     def __init__(self, gamma, epsilon, lr, input_dims,batch_size,n_actions,
-                 max_mem_size = 1000000, eps_end=0.01, eps_dec=5e-7, memory = "ER",
-                 replace=100,image = False,framestack = True):
+                 max_mem_size = 1000000, eps_end=0.01, eps_dec=2e-6, memory = "ER",
+                 replace=100,image = False,framestack = True,learning_starts=10000,
+                 preprocess = True):
 
         #need to test image
         #need to add preprocess
@@ -98,6 +97,8 @@ class Agent():
         self.framestack = framestack
         self.image = image
         self.stacked_frames = None
+        self.learning_starts = learning_starts
+        self.preprocess = preprocess
 
         if memory == "ER":
             from ER import ReplayMemory
@@ -137,32 +138,52 @@ class Agent():
             for idx, _ in enumerate(self.stacked_frames):
                 self.stacked_frames[idx,:] = frame
         else:
-            self.stacked_frames[0:buffer_size-1,:] = sself.tacked_frames[1:,:]
-            self.stacked_frames[buffer_size-1, :] = frame
 
-        stacked_frames = stacked_frames.reshape(1, *frame.shape[0:2], buffer_size)
+            self.stacked_frames = np.roll(self.stacked_frames,-1)
 
-        return stacked_frames
+            #3 is most recent frame
+            self.stacked_frames[buffer_size-1,:] = frame
+            #shape is (4,32,64)
+
 
     def choose_action(self, observation):
+        
 
         if self.image:
-            self.stack_frames(observation)
+            if self.stacked_frames is None:
+                observation = self.process_frame(observation)
+                self.stack_frames(observation)
                 
         
-        if np.random.random() > self.epsilon:
-            state = T.tensor([observation],dtype=T.float).to(self.q_eval.device)
-            _, advantage = self.q_eval.forward(state)
-            action = T.argmax(advantage).item()
+            if np.random.random() > self.epsilon:
+                state = T.tensor(self.stacked_frames,dtype=T.float).to(self.q_eval.device)
+                _, advantage = self.q_eval.forward(state)
+                action = T.argmax(advantage).item()
+            else:
+                action = np.random.choice(self.action_space)
+
         else:
-            action = np.random.choice(self.action_space)
+            if np.random.random() > self.epsilon:
+                state = T.tensor([observation],dtype=T.float).to(self.q_eval.device)
+                _, advantage = self.q_eval.forward(state)
+                action = T.argmax(advantage).item()
+            else:
+                action = np.random.choice(self.action_space)            
 
         return action
 
     def store_transition(self, state, action, reward, state_, done):
-        self.memory.store_transition(state, action, reward, state_, done)
+        state_ = self.process_frame(state_)
+        state = deepcopy(self.stacked_frames)
+        self.stack_frames(state_)
+        self.memory.store_transition(self.stacked_frames, action, reward, state_, done)
         if done:
             self.stacked_frames = None
+
+    def process_frame(self,frame):
+        #could try using half precision if needed
+        frame = np.true_divide(frame, 255).astype(np.float32)
+        return frame
 
     def replace_target_network(self):
         if self.learn_step_counter % self.replace_target_cnt == 0:
@@ -181,7 +202,7 @@ class Agent():
         self.q_next.load_checkpoint()
 
     def learn(self):
-        if self.memory.mem_cntr < self.batch_size:
+        if self.memory.mem_cntr < self.learning_starts:
             return
 
         self.q_eval.optimizer.zero_grad()
@@ -236,5 +257,3 @@ class Agent():
             #update tree priorities
             self.memory.batch_update(tree_idx, loss_array.cpu().detach())
 
-
-        
