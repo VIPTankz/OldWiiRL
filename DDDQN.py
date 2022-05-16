@@ -5,13 +5,14 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from copy import deepcopy
+import time
 
 
 class DuelingDeepQNetworkConv(nn.Module):
     def __init__(self, lr, n_actions, name, input_dims,chkpt_dir):
         super(DuelingDeepQNetworkConv, self).__init__()
         
-
+        self.start = time.time()
         #if framestack was turned off, this needs to change
         self.conv1 = nn.Conv2d(4, 32, 8, stride=4,padding = 2)
         self.conv2 = nn.Conv2d(32, 64, 4, stride=2,padding = 1)
@@ -42,6 +43,14 @@ class DuelingDeepQNetworkConv(nn.Module):
 
         return V,A
 
+    def save_checkpoint(self):
+        #print('... saving checkpoint ...')
+        T.save(self.state_dict(), "current_model" + str(round(time.time() - self.start,3)))
+
+    def load_checkpoint(self):
+        #print('... loading checkpoint ...')
+        self.load_state_dict(T.load(self.checkpoint_file))
+
 class DuelingDeepQNetwork(nn.Module):
     def __init__(self, lr, n_actions, name, input_dims,chkpt_dir):
         super(DuelingDeepQNetwork, self).__init__()
@@ -65,11 +74,11 @@ class DuelingDeepQNetwork(nn.Module):
         return V, A
 
     def save_checkpoint(self):
-        print('... saving checkpoint ...')
+        #print('... saving checkpoint ...')
         T.save(self.state_dict(), self.checkpoint_file)
 
     def load_checkpoint(self):
-        print('... loading checkpoint ...')
+        #print('... loading checkpoint ...')
         self.load_state_dict(T.load(self.checkpoint_file))
 
 class Agent():
@@ -97,6 +106,9 @@ class Agent():
         self.framestack = framestack
         self.image = image
         self.stacked_frames = None
+        self.need_replace = False
+        self.before_learn = True
+        self.before_learn_change = False
         self.learning_starts = learning_starts
         self.preprocess = preprocess
 
@@ -148,13 +160,11 @@ class Agent():
 
     def choose_action(self, observation):
         
-
         if self.image:
             if self.stacked_frames is None:
                 observation = self.process_frame(observation)
                 self.stack_frames(observation)
-                
-        
+                        
             if np.random.random() > self.epsilon:
                 state = T.tensor(self.stacked_frames,dtype=T.float).to(self.q_eval.device)
                 _, advantage = self.q_eval.forward(state)
@@ -176,9 +186,12 @@ class Agent():
         state_ = self.process_frame(state_)
         state = deepcopy(self.stacked_frames)
         self.stack_frames(state_)
-        self.memory.store_transition(self.stacked_frames, action, reward, state_, done)
+        self.memory.store_transition(state, action, reward, self.stacked_frames, done)
         if done:
             self.stacked_frames = None
+            self.act_replace_target_network()
+            if self.before_learn_change and self.before_learn:
+                self.before_learn = False
 
     def process_frame(self,frame):
         #could try using half precision if needed
@@ -187,7 +200,12 @@ class Agent():
 
     def replace_target_network(self):
         if self.learn_step_counter % self.replace_target_cnt == 0:
+            self.need_replace = True
+
+    def act_replace_target_network(self):
+        if self.need_replace:
             self.q_next.load_state_dict(self.q_eval.state_dict())
+            self.need_replace = False
 
     def decrement_epsilon(self):
         self.epsilon = self.epsilon - self.eps_dec \
@@ -203,6 +221,9 @@ class Agent():
 
     def learn(self):
         if self.memory.mem_cntr < self.learning_starts:
+            return
+        elif self.before_learn:
+            self.before_learn_change = True
             return
 
         self.q_eval.optimizer.zero_grad()

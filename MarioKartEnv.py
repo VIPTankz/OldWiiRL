@@ -266,7 +266,7 @@ class MarioKartEnv():
         #checkpoints
         if self.regions[num].is_chkp:
             if self.regions[num].chkp_num > self.current_chkp or (self.regions[num].chkp_num == 0 and self.current_chkp == self.num_chkps):
-                reward += 60
+                reward += 65
                 #print("checkpoint: " + str(self.regions[num].chkp_num))
                 self.current_chkp = self.regions[num].chkp_num
             elif self.regions[num].chkp_num < self.current_chkp or \
