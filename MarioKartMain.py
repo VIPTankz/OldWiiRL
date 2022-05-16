@@ -13,7 +13,7 @@ if __name__ == '__main__':
     agent = Agent(gamma=0.99, epsilon=1, batch_size=32, n_actions=4,
                       eps_end=0.1, input_dims=[4,32,64], lr=1e-5,
                       max_mem_size=1000000,memory = "ER",image = True,
-                      learning_starts=200,replace=1000,preprocess = True)
+                      learning_starts=20000,replace=1000,preprocess = True)
 
     if load_checkpoint:
         agent.load_models()
