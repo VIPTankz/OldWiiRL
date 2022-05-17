@@ -7,13 +7,14 @@ from MarioKartEnv import MarioKartEnv
 
 if __name__ == '__main__':
     env = MarioKartEnv()
-    save_interval = 100
+    save_interval = 250
     load_checkpoint = False
 
-    agent = Agent(gamma=0.99, epsilon=1, batch_size=32, n_actions=4,
-                      eps_end=0.1, input_dims=[4,32,64], lr=1e-5,
-                      max_mem_size=1000000,memory = "ER",image = True,
-                      learning_starts=20000,replace=1000,preprocess = True)
+    agent = Agent(gamma=0.99, epsilon=1, batch_size=64, n_actions=4,
+                      eps_end=0.01, input_dims=[4,32,64], lr=6.25e-5,
+                      max_mem_size=1000000,memory = "PER",image = True,
+                      learning_starts=25000,replace=12000,preprocess = True,
+                      eps_dec=1.5e-6)
 
     if load_checkpoint:
         agent.load_models()

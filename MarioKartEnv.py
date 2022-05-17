@@ -141,6 +141,9 @@ class MarioKartEnv():
         self.grid_x = int(self.image_x / self.grid_size)
         self.grid_y = int(self.image_y / self.grid_size)
         
+        self.time_till_checkpoint = 4
+        self.checkpoint_timer = time.time()
+        
         self.method = eval('cv2.TM_CCOEFF')
         self.num_chkps = 22
         with open(save_name, "rb") as f:
@@ -197,7 +200,7 @@ class MarioKartEnv():
             self.dist = x_dif**2 + y_dif**2
 
             #exception for broken template matching
-            if self.dist > 900:
+            if self.dist > 950:
 
                 #need to allow it to refind template next frame
                 self.first = True
@@ -267,6 +270,7 @@ class MarioKartEnv():
         if self.regions[num].is_chkp:
             if self.regions[num].chkp_num > self.current_chkp or (self.regions[num].chkp_num == 0 and self.current_chkp == self.num_chkps):
                 reward += 65
+                self.checkpoint_timer = time.time()
                 #print("checkpoint: " + str(self.regions[num].chkp_num))
                 self.current_chkp = self.regions[num].chkp_num
             elif self.regions[num].chkp_num < self.current_chkp or \
@@ -277,6 +281,10 @@ class MarioKartEnv():
         
         if reset_frames:
             self.out_frames = 0
+
+        #timer for reaching checkpoints
+        if time.time() - self.checkpoint_timer > self.time_till_checkpoint:
+            self.out_frames = 10
             
         return reward
 

@@ -13,6 +13,7 @@ class DuelingDeepQNetworkConv(nn.Module):
         super(DuelingDeepQNetworkConv, self).__init__()
         
         self.start = time.time()
+        
         #if framestack was turned off, this needs to change
         self.conv1 = nn.Conv2d(4, 32, 8, stride=4,padding = 2)
         self.conv2 = nn.Conv2d(32, 64, 4, stride=2,padding = 1)
@@ -45,7 +46,7 @@ class DuelingDeepQNetworkConv(nn.Module):
 
     def save_checkpoint(self):
         #print('... saving checkpoint ...')
-        T.save(self.state_dict(), "current_model" + str(round(time.time() - self.start,3)))
+        T.save(self.state_dict(), "current_model" + str(int(time.time() - self.start)))
 
     def load_checkpoint(self):
         #print('... loading checkpoint ...')
@@ -89,10 +90,10 @@ class Agent():
 
         #need to test image
         #need to add preprocess
-
+        #self.temp_timer = time.time()
         self.gamma = gamma
         self.epsilon = epsilon
-        self.lr = 6.25e-5#lr
+        self.lr = lr
         self.n_actions = n_actions
         self.input_dims = input_dims
         self.batch_size = batch_size
@@ -220,6 +221,12 @@ class Agent():
         self.q_next.load_checkpoint()
 
     def learn(self):
+        """
+        if self.memory.mem_cntr % 32 == 31:
+            print((time.time() - self.temp_timer)/32)
+            self.temp_timer = time.time()
+        """
+        
         if self.memory.mem_cntr < self.learning_starts:
             return
         elif self.before_learn:
