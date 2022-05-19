@@ -258,6 +258,7 @@ class Agent():
         return action
 
     def store_transition(self, state, action, reward, state_, done):
+        reward = np.clip(reward,-1,1)
         if not self.n_step:
             if self.image:
                 state_ = self.process_frame(state_)
