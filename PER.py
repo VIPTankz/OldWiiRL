@@ -1,172 +1,216 @@
-
 import numpy as np
 
-class SumTree(object):
-    data_pointer = 0
-    
-    # Here we initialize the tree with all nodes = 0, and initialize the data with all values = 0
-    def __init__(self, capacity):
-        # Number of leaf nodes (final nodes) that contains experiences
-        self.capacity = capacity
-        
-        # Generate the tree with all nodes values = 0
-        # To understand this calculation (2 * capacity - 1) look at the schema below
-        # Remember we are in a binary node (each node has max 2 children) so 2x size of leaf (capacity) - 1 (root node)
-        # Parent nodes = capacity - 1
-        # Leaf nodes = capacity
-        self.tree = np.zeros(2 * capacity - 1)
-        
-        # Contains the experiences (so the size of data is capacity)
-        self.data = np.zeros(capacity, dtype=object)    
-    
-    # Here we define function that will add our priority score in the sumtree leaf and add the experience in data:
-    def add(self, priority, data):
-        
-        # Look at what index we want to put the experience
-        tree_index = self.data_pointer + self.capacity - 1
+class Node:
+    def __init__(self, left, right, is_leaf: bool = False, idx = None):
+        self.left = left
+        self.right = right
+        self.is_leaf = is_leaf
+        if not self.is_leaf:
+            self.value = self.left.value + self.right.value
+        self.parent = None
+        self.idx = idx  # this value is only set for leaf nodes
+        if left is not None:
+            left.parent = self
+        if right is not None:
+            right.parent = self
+    @classmethod
+    def create_leaf(cls, value, idx):
+        leaf = cls(None, None, is_leaf=True, idx=idx)
+        leaf.value = value
+        return leaf
 
-        # Update data frame
-        self.data[self.data_pointer] = data
+def create_tree(input: list):
+    nodes = [Node.create_leaf(v, i) for i, v in enumerate(input)]
+    leaf_nodes = nodes
+    while len(nodes) > 1:
+        inodes = iter(nodes)
+        nodes = [Node(*pair) for pair in zip(inodes, inodes)]
+    return nodes[0], leaf_nodes
 
-        # Update the leaf
-        self.update (tree_index, priority)
-
-        # Add 1 to data_pointer
-        self.data_pointer += 1
-
-        if self.data_pointer >= self.capacity:  # If we're above the capacity, we go back to first index (we overwrite)
-            self.data_pointer = 0
+def retrieve(value: float, node: Node):
+    if node.is_leaf:
+        return node
+    if node.left.value >= value:
+        return retrieve(value, node.left)
+    else:
+        return retrieve(value - node.left.value, node.right)
             
-    # Update the leaf priority score and propagate the change through tree
-    def update(self, tree_index, priority):
-        # Change = new priority score - former priority score
-        change = priority - self.tree[tree_index]
-        self.tree[tree_index] = priority
+def update(node: Node, new_value: float):
+    change = new_value - node.value
+    node.value = new_value
+    propagate_changes(change, node.parent)
+    
+def propagate_changes(change: float, node: Node):
+    node.value += change
+    if node.parent is not None:
+        propagate_changes(change, node.parent)
 
-        # then propagate the change through tree
-        # this method is faster than the recursive loop in the reference code
-        while tree_index != 0:
-            tree_index = (tree_index - 1) // 2
-            self.tree[tree_index] += change
+class ReplayMemory:
+    def __init__(self, input_dims, max_mem, batch_size):
+
+        self.alpha = 0.6
+        self.beta = 0.4
+        self.beta_steps = 180000
+        self.beta_inc = (1 - self.beta) / self.beta_steps
+        self.eps = 0.01
         
-    # Here build a function to get a leaf from our tree. So we'll build a function to get the leaf_index, priority value of that leaf and experience associated with that leaf index:
-    def get_leaf(self, v):
-        parent_index = 0
-
-        # the while loop is faster than the method in the reference code
-        while True:
-            left_child_index = 2 * parent_index + 1
-            right_child_index = left_child_index + 1
-
-            # If we reach bottom, end the search
-            if left_child_index >= len(self.tree):
-                leaf_index = parent_index
-                break
-            else: # downward search, always search for a higher priority node
-                if v <= self.tree[left_child_index]:
-                    parent_index = left_child_index
-                else:
-                    v -= self.tree[left_child_index]
-                    parent_index = right_child_index
-
-        data_index = leaf_index - self.capacity + 1
-
-        return leaf_index, self.tree[leaf_index], self.data[data_index]
-    
-    @property
-    def total_priority(self):
-        return self.tree[0] # Returns the root node
-
-# Now we finished constructing our SumTree object, next we'll build a memory object.
-class ReplayMemory(object):  # stored as ( state, action, reward, next_state ) in SumTree
-    PER_e = 0.01  # Hyperparameter that we use to avoid some experiences to have 0 probability of being taken
-    PER_a = 0.6  # Hyperparameter that we use to make a tradeoff between taking only exp with high priority and sampling randomly
-    PER_b = 0.4  # importance-sampling, from initial value increasing to 1
-    
-    PER_b_increment_per_sampling = 0.001
-    
-    absolute_error_upper = 1.  # clipped abs error
-
-    def __init__(self, shape,capacity,batch_size):
-        # Making the tree 
-        self.tree = SumTree(capacity)
-        self.mem_cntr = 0
-        self.shape = shape
+        self.mem_size = max_mem
         self.batch_size = batch_size
-        self.capacity = capacity
+        self.mem_cntr = 0
+        
+        self.state_memory = np.zeros((self.mem_size, *input_dims),
+                                     dtype=np.float32)
+        self.new_state_memory = np.zeros((self.mem_size, *input_dims),
+                                         dtype=np.float32)
+        self.action_memory = np.zeros(self.mem_size, dtype=np.int64)
+        self.reward_memory = np.zeros(self.mem_size, dtype=np.float32)
+        self.terminal_memory = np.zeros(self.mem_size, dtype=np.bool)
+        
+        priorities = np.zeros((self.mem_size, ), dtype=np.float32)
+
+        self.root_node, self.leaf_nodes = create_tree(priorities)
+        self.max_priority = -1.0
+        self.absolute_error_upper = 1.0
+
+    def store_transition(self, state, action, reward, state_, terminal):
+        self.beta = min(self.beta + self.beta_inc,1)
+        
+        index = self.mem_cntr % self.mem_size
+        self.state_memory[index] = state
+        self.action_memory[index] = action
+        self.reward_memory[index] = reward
+        self.new_state_memory[index] = state_
+        self.terminal_memory[index] = terminal
+
+        update(self.leaf_nodes[index], abs(self.max_priority))
+
+        self.mem_cntr += 1
+
+    def sample_memory(self):
+        max_mem = min(self.mem_cntr, self.mem_size)
+        """
+
+        if self.mem_cntr > self.mem_size:
+            prios = self.priorities
+        else:
+            prios = self.priorities[:self.mem_cntr]"""
+        tree_total = self.root_node.value
+        indices = []
+        probs = []
+        for i in range(self.batch_size):
+            rand_val = np.random.uniform(0, tree_total)
+
+            leaf = retrieve(rand_val, self.root_node)
+            
+            indices.append(leaf.idx)
+
+            ###remove here IS
+            #probs.append(leaf.value / tree_total)
+
+        #and here IS
+        #probs = np.array(probs,dtype=np.float32)
+
+        states = self.state_memory[indices]
+        actions = self.action_memory[indices]
+        rewards = self.reward_memory[indices]
+        new_states = self.new_state_memory[indices]
+        terminals = self.terminal_memory[indices]
+
+        #Both of these IS
+        #weights = (max_mem * probs) ** (-self.beta)
+        #weights /= weights.max()
+
+        #last bit here
+        return states, actions, rewards, new_states, terminals, indices#, np.array(weights, dtype=np.float32)
+
+    def batch_update(self,batch_indices, batch_priorities):
+        #print(batch_priorities.type)
+
+        #batch_priorities += self.eps
+        #batch_priorities = np.minimum(batch_priorities, self.absolute_error_upper)
+
+        #batch_priorities = np.power(batch_priorities, self.alpha)
+
+        self.max_priority = max(self.max_priority, max(batch_priorities))
+        
+        for idx, prio in zip(batch_indices, batch_priorities):            
+            update(self.leaf_nodes[idx], prio)
+
+    def is_sufficient(self):
+        return self.mem_cntr > self.batch_size    
+        
+
+################################################ the below implementation doesnt use tree
+class ReplayMemoryBuffer:
+    def __init__(self, input_dims, max_mem, batch_size):
+
+        self.alpha = 0.6
+        self.beta = 0.4
+        self.beta_steps = 50000
+        self.beta_inc = (1 - self.beta) / self.beta_steps
+        self.eps = 1e-5
+        
+        self.mem_size = max_mem
+        self.batch_size = batch_size
+        self.mem_cntr = 0
+        
+        self.state_memory = np.zeros((self.mem_size, *input_dims),
+                                     dtype=np.float32)
+        self.new_state_memory = np.zeros((self.mem_size, *input_dims),
+                                         dtype=np.float32)
+        self.action_memory = np.zeros(self.mem_size, dtype=np.int64)
+        self.reward_memory = np.zeros(self.mem_size, dtype=np.float32)
+        self.terminal_memory = np.zeros(self.mem_size, dtype=np.bool)
+        
+        self.priorities = np.zeros((self.mem_size, ), dtype=np.float32)
+
+
+    def store_transition(self, state, action, reward, state_, terminal):
+        self.beta = min(self.beta + self.beta_inc,1)
+        
+        max_prio = self.priorities.max() if self.mem_cntr > 0 else 1.0
+        
+        index = self.mem_cntr % self.mem_size
+        self.state_memory[index] = state
+        self.action_memory[index] = action
+        self.reward_memory[index] = reward
+        self.new_state_memory[index] = state_
+        self.terminal_memory[index] = terminal
+
+        self.priorities[index] = max_prio
+
+        self.mem_cntr += 1
+
+    def sample_memory(self):
+
+        max_mem = min(self.mem_cntr, self.mem_size)
+
+        if self.mem_cntr > self.mem_size:
+            prios = self.priorities
+        else:
+            prios = self.priorities[:self.mem_cntr]
+
+        probs = prios ** self.alpha
+        probs /= probs.sum()
+        indices = np.random.choice(max_mem, self.batch_size, p=probs)
+
+        states = self.state_memory[indices]
+        actions = self.action_memory[indices]
+        rewards = self.reward_memory[indices]
+        new_states = self.new_state_memory[indices]
+        terminals = self.terminal_memory[indices]
+
+        weights = (max_mem * probs[indices]) ** (-self.beta)
+        weights /= weights.max()
+
+        return states, actions, rewards, new_states, terminals, indices, np.array(weights, dtype=np.float32)
+
+    def batch_update(self,batch_indices, batch_priorities):
+        for idx, prio in zip(batch_indices, batch_priorities):
+            self.priorities[idx] = prio
 
     def is_sufficient(self):
         return self.mem_cntr > self.batch_size
-        
-    # Next, we define a function to store a new experience in our tree.
-    # Each new experience will have a score of max_prority (it will be then improved when we use this exp to train our DDQN).
-    def store_transition(self, state, action, reward, state_, terminal):
 
-        experience = [state, action, reward, state_, terminal]
-            
-        # Find the max priority
-        self.mem_cntr += 1
-        max_priority = np.max(self.tree.tree[-self.tree.capacity:])
 
-        # If the max priority = 0 we can't put priority = 0 since this experience will never have a chance to be selected
-        # So we use a minimum priority
-        if max_priority == 0:
-            max_priority = self.absolute_error_upper
-
-        self.tree.add(max_priority, experience)   # set the max priority for new priority
-        
-    # Now we create sample function, which will be used to pick batch from our tree memory, which will be used to train our model.
-    # - First, we sample a minibatch of n size, the range [0, priority_total] into priority ranges.
-    # - Then a value is uniformly sampled from each range.
-    # - Then we search in the sumtree, for the experience where priority score correspond to sample values are retrieved from.
-    def sample_memory(self):
-        # Create a miself.batch_minibatch array that will contains the minibatch
-        states = np.zeros((self.batch_size, *self.shape),
-                                    dtype=np.float32)
-        actions = np.zeros(self.batch_size, dtype=np.int64)
-        rewards = np.zeros(self.batch_size, dtype=np.float32)
-        states_ = np.zeros((self.batch_size, *self.shape),
-                                    dtype=np.float32)
-        terminal = np.zeros(self.batch_size, dtype=np.bool)
-
-        b_idx = np.empty((self.batch_size,), dtype=np.int32)
-
-        # Calculate the priority segment
-        # Here, as explained in the paper, we divide the Range[0, ptotal] into n ranges
-        priority_segment = self.tree.total_priority / self.batch_size       # priority segment
-
-        for i in range(self.batch_size):
-            # A value is uniformly sample from each range
-            a, b = priority_segment * i, priority_segment * (i + 1)
-            data = 0
-            count = 0
-            while data == 0:
-                count += 1
-                value = np.random.uniform(a, b)
-
-                # Experience that correspond to each value is retrieved
-                index, priority, data = self.tree.get_leaf(value)
-
-                if count > 50:
-                    raise Exception("Couldnt get non 0 value from tree")
-                
-            b_idx[i]= index
-
-            states[i] = data[0]                
-            actions[i] = data[1]
-            rewards[i] = data[2]
-            states_[i] = data[3]
-            terminal[i] = data[4]
-
-            #minibatch.append([data[0],data[1],data[2],data[3],data[4]])
-
-        return b_idx, states,actions,rewards,states_,terminal
     
-    # Update the priorities on the tree
-    def batch_update(self, tree_idx, abs_errors):
-        abs_errors += self.PER_e  # convert to abs and avoid 0
-        clipped_errors = np.minimum(abs_errors, self.absolute_error_upper)
-        ps = np.power(clipped_errors, self.PER_a)
-
-        for ti, p in zip(tree_idx, ps):
-            self.tree.update(ti, p)
