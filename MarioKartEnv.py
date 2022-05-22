@@ -115,6 +115,7 @@ class MarioKartEnv():
         self.tem_h = 132#100,141
 
         self.action_space = gym.spaces.Discrete(4)
+        self.observation_space = gym.spaces.Box(0.0, 1.0, [32, 64])
         """
         
         1 - accel
@@ -204,7 +205,7 @@ class MarioKartEnv():
 
                 #need to allow it to refind template next frame
                 self.first = True
-                reward = 0.9
+                reward = 0
                 bottom_right2 = (self.prev_top_left[0] + self.tem_w, self.prev_top_left[1] + self.tem_h)
                 cv2.rectangle(img,self.prev_top_left, bottom_right2, 255, 2)
                 
@@ -220,7 +221,7 @@ class MarioKartEnv():
                 reward = self.get_reward(x_dif,y_dif)
                 if self.out_frames > 3:
                     terminal = True
-                    reward -= 150
+                    reward = -1
 
                 
                 """bottom_right = (self.top_left[0] + self.tem_w, self.top_left[1] + self.tem_h)
@@ -231,9 +232,6 @@ class MarioKartEnv():
                 
         else:
             return 0,terminal
-
-        reward = reward / 30
-        reward -= 0.03
 
         return reward,terminal
 
@@ -261,15 +259,15 @@ class MarioKartEnv():
             reset_frames = False
 
         #check dir_x
-        reward += x_dif * self.regions[num].dir_x
+        #reward += x_dif * self.regions[num].dir_x
 
         #check dir_y
-        reward -= y_dif * self.regions[num].dir_y
+        #reward -= y_dif * self.regions[num].dir_y
 
         #checkpoints
         if self.regions[num].is_chkp:
             if self.regions[num].chkp_num > self.current_chkp or (self.regions[num].chkp_num == 0 and self.current_chkp == self.num_chkps):
-                reward += 65
+                reward += 1
                 self.checkpoint_timer = time.time()
                 #print("checkpoint: " + str(self.regions[num].chkp_num))
                 self.current_chkp = self.regions[num].chkp_num
@@ -296,8 +294,7 @@ class MarioKartEnv():
         for i in range(2):
             if not (point[i] >= reg_point[i] and point[i] <= reg_end_point[i]):
                 return False
-        return True
-        
+        return True        
 
     def get_state(self):
         hwndDC = win32gui.GetWindowDC(self.hwnd)
@@ -329,12 +326,12 @@ class MarioKartEnv():
         im = cv2.cvtColor(im, cv2.COLOR_BGR2GRAY)
         reward,terminal = self.template_match(im)
         
-        
         im = im[80:, 85: 3868 - 85]
         
         im = cv2.resize(im, (64,32), interpolation = cv2.INTER_AREA)
         #cv2.imwrite("bug_test_ai" + str(time.time()) + ".jpg", im)
         #raise Exception("stop")
+        im = self.process_frame(im)
 
         win32gui.DeleteObject(saveBitMap.GetHandle())
         saveDC.DeleteDC()
@@ -359,7 +356,10 @@ class MarioKartEnv():
 
         return state,reward,terminal,info
 
-        
+    def process_frame(self,frame):
+        #could try using half precision if needed
+        frame = np.true_divide(frame, 255).astype(np.float32)
+        return frame        
 
     def apply_action(self,action):
         """

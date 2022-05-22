@@ -72,13 +72,15 @@ class DuelingDeepQNetworkConv(nn.Module):
             self.V = NoisyLinear(512, 1)
             self.A = NoisyLinear(512, n_actions)
 
+
+
         self.optimizer = optim.Adam(self.parameters(), lr=lr)
         self.loss = nn.MSELoss()
 
         self.to(self.device)
 
     def forward(self, observation):
-        
+
         #observation = T.Tensor(observation).to(self.device)
         observation = observation.view(-1, 4, 64, 32)
         observation = F.relu(self.conv1(observation))
@@ -98,7 +100,7 @@ class DuelingDeepQNetworkConv(nn.Module):
 
     def load_checkpoint(self):
         #print('... loading checkpoint ...')
-        self.load_state_dict(T.load(self.checkpoint_file))
+        self.load_state_dict(T.load("current_model7043"))
 
 class DuelingDeepQNetwork(nn.Module):
     def __init__(self, lr, n_actions, name, input_dims,chkpt_dir,noisy=False):
@@ -109,30 +111,30 @@ class DuelingDeepQNetwork(nn.Module):
         self.device = T.device('cpu')#'cuda:0' if T.cuda.is_available() else 
         print("device: " + str(self.device))
 
-        if not noisy:
+        """if not noisy:
             self.fc1 = nn.Linear(*input_dims, 512)
             self.V = nn.Linear(512, 1)
             self.A = nn.Linear(512, n_actions)
         else:
             self.fc1 = NoisyLinear(*input_dims, 512)
             self.V = NoisyLinear(512, 1)
-            self.A = NoisyLinear(512, n_actions)        
+            self.A = NoisyLinear(512, n_actions)  """
 
+        self.fcA = nn.Linear(*input_dims, 512)
+        self.fcV = nn.Linear(*input_dims, 512)
+        self.V = nn.Linear(512, 1)
+        self.A = nn.Linear(512, n_actions)
 
         self.optimizer = optim.Adam(self.parameters(), lr=lr)
         self.loss = nn.MSELoss()
 
         self.to(self.device)
 
-    def reset_noise(self):
-        self.fc1.reset_noise()
-        self.V.reset_noise()
-        self.A.reset_noise()
-
     def forward(self, state):
-        flat1 = F.relu(self.fc1(state))
-        V = self.V(flat1)
-        A = self.A(flat1)
+        flatV = F.relu(self.fcV(state))
+        flatA = F.relu(self.fcA(state))
+        V = self.V(flatV)
+        A = self.A(flatA)
 
         return V, A
 
@@ -142,16 +144,14 @@ class DuelingDeepQNetwork(nn.Module):
 
     def load_checkpoint(self):
         #print('... loading checkpoint ...')
-        self.load_state_dict(T.load(self.checkpoint_file))
+        self.load_state_dict(T.load("current_model7043"))
 
 class Agent():
     def __init__(self, gamma, epsilon, lr, input_dims,batch_size,n_actions,
                  max_mem_size = 1000000, eps_end=0.01, eps_dec=2e-6, memory = "ER",
                  replace=100,image = False,framestack = True,learning_starts=10000,
-                 preprocess = True,n_step = False,noisy=False):
+                 preprocess = True,n_step = False,noisy=False,action_repeat=1):
 
-        #need to test image
-        #need to add preprocess
         #self.temp_timer = time.time()
         self.gamma = gamma
         self.epsilon = epsilon
@@ -166,7 +166,7 @@ class Agent():
         self.learn_step_counter = 0
         self.chkpt_dir = 'tmp/dueling_ddqn'
         self.memory_type = memory
-        self.framestack = framestack
+        #self.framestack = framestack
         self.image = image
         self.stacked_frames = None
         self.need_replace = False
@@ -174,6 +174,10 @@ class Agent():
         self.before_learn_change = False
         self.learning_starts = learning_starts
         self.preprocess = preprocess
+
+        self.action_repeat = action_repeat - 1
+        self.cur_action_repeat = self.action_repeat + 1
+        self.held_action = None
 
         #n_step parameters
         self.n_step = n_step
@@ -208,7 +212,6 @@ class Agent():
                                        name='lunar_lander_dueling_ddqn_q_next',
                                        chkpt_dir=self.chkpt_dir,noisy = self.noisy)
         else:
-            #need to implement framestack
             self.q_eval = DuelingDeepQNetworkConv(self.lr, self.n_actions,
                                        input_dims=self.input_dims,
                                        name='lunar_lander_dueling_ddqn_q_eval',
@@ -219,29 +222,22 @@ class Agent():
                                        name='lunar_lander_dueling_ddqn_q_next',
                                        chkpt_dir=self.chkpt_dir,noisy = self.noisy)
 
-    def stack_frames(self, frame, buffer_size=4):
-        if self.stacked_frames is None:
-            self.stacked_frames = np.zeros((buffer_size, *frame.shape))
-            for idx, _ in enumerate(self.stacked_frames):
-                self.stacked_frames[idx,:] = frame
-        else:
-
-            self.stacked_frames = np.roll(self.stacked_frames,-1)
-
-            #3 is most recent frame
-            self.stacked_frames[buffer_size-1,:] = frame
-            #shape is (4,32,64)
-
-
     def choose_action(self, observation):
+
+        if self.cur_action_repeat < self.action_repeat:
+            self.cur_action_repeat += 1
+            return self.held_action
+        else:
+            self.cur_action_repeat = 0
+
+        if self.memory.mem_cntr < self.learning_starts:
+            self.held_action = np.random.choice(self.action_space)
+            return self.held_action
         
         if self.image:
-            if self.stacked_frames is None:
-                observation = self.process_frame(observation)
-                self.stack_frames(observation)
                         
             if np.random.random() > self.epsilon:
-                state = T.tensor(self.stacked_frames,dtype=T.float).to(self.q_eval.device)
+                state = T.tensor(observation,dtype=T.float32).to(self.q_eval.device)
                 _, advantage = self.q_eval.forward(state)
                 action = T.argmax(advantage).item()
             else:
@@ -249,39 +245,29 @@ class Agent():
 
         else:
             if np.random.random() > self.epsilon:
-                state = T.tensor([observation],dtype=T.float).to(self.q_eval.device)
+                state = T.tensor([observation],dtype=T.float32).to(self.q_eval.device)
                 _, advantage = self.q_eval.forward(state)
                 action = T.argmax(advantage).item()
             else:
                 action = np.random.choice(self.action_space)            
 
+        self.held_action = action
         return action
 
     def store_transition(self, state, action, reward, state_, done):
-        reward = np.clip(reward,-1,1)
         if not self.n_step:
             if self.image:
-                state_ = self.process_frame(state_)
-                state = deepcopy(self.stacked_frames)
-                self.stack_frames(state_)
-                self.memory.store_transition(state, action, reward, self.stacked_frames, done)
-                if done:
-                    self.stacked_frames = None
+                self.memory.store_transition(state, action, reward, state_, done)
                     
             else:
                 self.memory.store_transition(state, action, reward, state_, done)
 
         else:
             if self.image:
-                state_ = self.process_frame(state_)
-                state = deepcopy(self.stacked_frames)
-                self.stack_frames(state_)
 
-                self.calc_n_step(state, action, reward, self.stacked_frames, done)
+                self.calc_n_step(state, action, reward,state_, done)
                 
                 #self.memory.store_transition(state, action, reward, self.stacked_frames, done)
-                if done:
-                    self.stacked_frames = None
                     
             else:
                 self.calc_n_step(state, action, reward, state_, done)
@@ -291,6 +277,9 @@ class Agent():
             self.act_replace_target_network()
             if self.before_learn_change and self.before_learn:
                 self.before_learn = False
+
+            #choose new action at start of next episode
+            self.cur_action_repeat = self.action_repeat + 1
 
     def calc_n_step(self,state, action, reward, state_, done):
 
@@ -326,11 +315,6 @@ class Agent():
                 del self.held_states[0]
                 del self.held_rewards[0]
                 del self.held_actions[0]     
-                
-    def process_frame(self,frame):
-        #could try using half precision if needed
-        frame = np.true_divide(frame, 255).astype(np.float32)
-        return frame
 
     def replace_target_network(self):
         if self.learn_step_counter % self.replace_target_cnt == 0:
@@ -354,11 +338,11 @@ class Agent():
         self.q_next.load_checkpoint()
 
     def learn(self):
-        """
-        if self.memory.mem_cntr % 32 == 31:
+        
+        """if self.memory.mem_cntr % 32 == 31:
             print((time.time() - self.temp_timer)/32)
-            self.temp_timer = time.time()
-        """
+            self.temp_timer = time.time()"""
+        
         
         if self.memory.mem_cntr < self.learning_starts:
             return
@@ -427,7 +411,7 @@ class Agent():
             
             loss_array += self.memory.eps
             loss_array = T.clamp(loss_array,min=0.0, max=1.0)
-            loss_array = T.float_power(loss_array,self.memory.alpha)
+            loss_array = T.pow(loss_array,self.memory.alpha)
 
             #update tree priorities
             self.memory.batch_update(tree_indices, loss_array.data.cpu().numpy())#.cpu().detach()

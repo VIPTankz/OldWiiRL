@@ -1,4 +1,5 @@
 import gym
+from gym.wrappers import FrameStack
 import numpy as np
 from DDDQN import Agent
 #from utils import plotLearning
@@ -7,15 +8,18 @@ from MarioKartEnv import MarioKartEnv
 
 if __name__ == '__main__':
     env = MarioKartEnv()
-    save_interval = 250
+    env = FrameStack(env,4)
+    save_interval = 400
     load_checkpoint = False
 
-    agent = Agent(gamma=0.99, epsilon=1, batch_size=64, n_actions=4,
-                      eps_end=0.01, input_dims=[4,32,64], lr=6.25e-5,
+    agent = Agent(gamma=0.99, epsilon=1, batch_size=32, n_actions=4,
+                      eps_end=0.1, input_dims=[4,32,64], lr=6.25e-5,
                       max_mem_size=1000000,memory = "PER",image = True,
                       learning_starts=25000,replace=12000,preprocess = True,
-                      eps_dec=1.5e-6)
+                      n_step = 4,noisy = True,action_repeat=1)
 
+
+    #learning starts to 50k
     if load_checkpoint:
         agent.load_models()
 
@@ -27,6 +31,7 @@ if __name__ == '__main__':
     while True:
         done = False
         observation = env.reset()
+        observation = np.stack( observation, axis=0)
         
         score = 0
         i += 1 
@@ -35,6 +40,7 @@ if __name__ == '__main__':
             steps += 1
             action = agent.choose_action(observation)
             observation_, reward, done, info = env.step(action)
+            observation_ = np.stack( observation_, axis=0)
             score += reward
             agent.store_transition(observation, action,
                                     reward, observation_, int(done))
