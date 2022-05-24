@@ -50,12 +50,11 @@ class NoisyLinear(nn.Linear):
 
 
 class DuelingDeepQNetworkConv(nn.Module):
-    def __init__(self, lr, n_actions, name, input_dims,chkpt_dir,noisy=False,atoms = 51,Vmin=-10,Vmax=10,batch_size=32):
+    def __init__(self, lr, n_actions, name, input_dims,chkpt_dir,noisy=False):
         super(DuelingDeepQNetworkConv, self).__init__()
         
         self.start = time.time()
         self.device = T.device('cuda:0' if T.cuda.is_available() else 'cpu')
-        self.n_actions = n_actions
         print("device: " + str(self.device))
         
         #if framestack was turned off, this needs to change
@@ -63,59 +62,40 @@ class DuelingDeepQNetworkConv(nn.Module):
         self.conv2 = nn.Conv2d(32, 64, 4, stride=2,padding = 1)
         self.conv3 = nn.Conv2d(64, 64, 3,stride = 1)
 
+
         if not noisy:
             self.fcA = nn.Linear(64*6*2, 512)
             self.fcV = nn.Linear(64*6*2, 512)
-            self.V = nn.Linear(512, 1 * atoms)
-            self.A = nn.Linear(512, n_actions * atoms)
+            self.V = nn.Linear(512, 1)
+            self.A = nn.Linear(512, n_actions)
         else:
             self.fcA = NoisyLinear(64*6*2, 512)
             self.fcV = NoisyLinear(64*6*2, 512)
-            self.V = NoisyLinear(512, 1 * atoms)
-            self.A = NoisyLinear(512, n_actions * atoms)
+            self.V = NoisyLinear(512, 1)
+            self.A = NoisyLinear(512, n_actions)
+
+
 
         self.optimizer = optim.Adam(self.parameters(), lr=lr)
         self.loss = nn.MSELoss()
 
-        self.batch_size = batch_size
-        self.atoms = atoms
-
-        delta_z = (Vmax - Vmin) / (atoms - 1)
-        self.softmax = nn.Softmax(dim=1)
-        self.supports = T.arange(Vmin,Vmax + delta_z,delta_z).to(self.device)
-
         self.to(self.device)
 
-    def forward(self,state):
-        input_size = len(state)
-        observation = state.view(-1, 4, 64, 32)
+    def forward(self, observation):
+
+        #observation = T.Tensor(observation).to(self.device)
+        observation = observation.view(-1, 4, 64, 32)
         observation = F.relu(self.conv1(observation))
         observation = F.relu(self.conv2(observation))
         observation = F.relu(self.conv3(observation))
 
         observation = observation.view(-1, 64*6*2)
-        
-        flatA = F.relu(self.fcA(observation))#problem is here
-        flatV = F.relu(self.fcV(observation))
-        
-        V = self.V(flatV).view(input_size, 1, self.atoms)
-        A = self.A(flatA).view(-1, self.n_actions, self.atoms)
-        adv_mean = A.mean(dim=1, keepdim=True)
+        observationA = F.relu(self.fcA(observation))
+        observationV = F.relu(self.fcV(observation))
+        A = self.A(observationA)
+        V = self.V(observationV)
 
-        return V + (A - adv_mean)
-
-    def both(self, x):
-        cat_out = self(x)#this means categorical out
-        probs = self.apply_softmax(cat_out)
-        weights = probs * self.supports
-        res = weights.sum(dim=2)
-        return cat_out, res
-
-    def qvals(self, x):
-        return self.both(x)[1]
-
-    def apply_softmax(self, t):
-        return self.softmax(t)
+        return V,A
 
     def save_checkpoint(self):
         #print('... saving checkpoint ...')
@@ -126,57 +106,40 @@ class DuelingDeepQNetworkConv(nn.Module):
         self.load_state_dict(T.load("current_model7043"))
 
 class DuelingDeepQNetwork(nn.Module):
-    def __init__(self, lr, n_actions, name, input_dims,chkpt_dir,noisy=False,atoms = 51,Vmin=-10,Vmax=10,batch_size=32):
+    def __init__(self, lr, n_actions, name, input_dims,chkpt_dir,noisy=False):
         super(DuelingDeepQNetwork, self).__init__()
         self.checkpoint_dir = chkpt_dir
         self.checkpoint_file = os.path.join(self.checkpoint_dir, name)
 
-        self.device = T.device('cpu')#'cuda:0' if T.cuda.is_available() else
-        self.n_actions = n_actions
+        self.device = T.device('cpu')#'cuda:0' if T.cuda.is_available() else 
         print("device: " + str(self.device))
 
-        if not noisy:
+        """if not noisy:
             self.fc1 = nn.Linear(*input_dims, 512)
-            self.V = nn.Linear(512, 1 * atoms)
-            self.A = nn.Linear(512, n_actions * atoms)
+            self.V = nn.Linear(512, 1)
+            self.A = nn.Linear(512, n_actions)
         else:
             self.fc1 = NoisyLinear(*input_dims, 512)
-            self.V = NoisyLinear(512, 1 * atoms)
-            self.A = NoisyLinear(512, n_actions * atoms)
+            self.V = NoisyLinear(512, 1)
+            self.A = NoisyLinear(512, n_actions)  """
+
+        self.fcA = nn.Linear(*input_dims, 512)
+        self.fcV = nn.Linear(*input_dims, 512)
+        self.V = nn.Linear(512, 1)
+        self.A = nn.Linear(512, n_actions)
 
         self.optimizer = optim.Adam(self.parameters(), lr=lr)
         self.loss = nn.MSELoss()
-        self.batch_size = batch_size
-        self.atoms = atoms
-
-        delta_z = (Vmax - Vmin) / (atoms - 1)
-        self.softmax = nn.Softmax(dim=1)
-        self.supports = T.arange(Vmin,Vmax + delta_z,delta_z)
 
         self.to(self.device)
-    
-    #need to check many of these. Dimensions may be messed up
-    def forward(self,state):
-        input_size = len(state)
-        flat = F.relu(self.fc1(state))
-        V = self.V(flat).view(input_size, 1, self.atoms)
-        A = self.A(flat).view(-1, self.n_actions, self.atoms)
-        adv_mean = A.mean(dim=1, keepdim=True)
 
-        return V + (A - adv_mean)
+    def forward(self, state):
+        flatV = F.relu(self.fcV(state))
+        flatA = F.relu(self.fcA(state))
+        V = self.V(flatV)
+        A = self.A(flatA)
 
-    def both(self, x):
-        cat_out = self(x)#this means categorical out
-        probs = self.apply_softmax(cat_out)
-        weights = probs * self.supports
-        res = weights.sum(dim=2)
-        return cat_out, res
-
-    def qvals(self, x):
-        return self.both(x)[1]
-
-    def apply_softmax(self, t):
-        return self.softmax(t)
+        return V, A
 
     def save_checkpoint(self):
         #print('... saving checkpoint ...')
@@ -193,7 +156,6 @@ class Agent():
                  preprocess = True,n_step = False,noisy=False,action_repeat=1):
 
         #self.temp_timer = time.time()
-        
         self.gamma = gamma
         self.epsilon = epsilon
         self.lr = lr
@@ -234,14 +196,6 @@ class Agent():
             self.epsilon = 0
             self.eps_min = 0
 
-        #categorical params
-        self.Vmax = 50
-        self.Vmin = -1
-        self.N_atoms = 51
-
-        #increment in each atom
-        self.delta_z = (self.Vmax - self.Vmin) / (self.N_atoms - 1)
-
         if memory == "ER":
             from ER import ReplayMemory
         elif memory == "PER":
@@ -252,68 +206,26 @@ class Agent():
         self.memory = ReplayMemory(input_dims,max_mem_size,self.batch_size)
 
         if not self.image:
-            self.device = T.device('cpu')
 
             self.q_eval = DuelingDeepQNetwork(self.lr, self.n_actions,
                                        input_dims=self.input_dims,
                                        name='lunar_lander_dueling_ddqn_q_eval',
-                                       chkpt_dir=self.chkpt_dir,noisy = self.noisy,atoms = self.N_atoms,
-                                        Vmin=self.Vmin,Vmax=self.Vmax,batch_size=self.batch_size)
+                                       chkpt_dir=self.chkpt_dir,noisy = self.noisy)
 
             self.q_next = DuelingDeepQNetwork(self.lr, self.n_actions,
                                        input_dims=self.input_dims,
                                        name='lunar_lander_dueling_ddqn_q_next',
-                                       chkpt_dir=self.chkpt_dir,noisy = self.noisy,atoms = self.N_atoms,
-                                        Vmin=self.Vmin,Vmax=self.Vmax,batch_size=self.batch_size)
+                                       chkpt_dir=self.chkpt_dir,noisy = self.noisy)
         else:
-            self.device = T.device('cuda:0' if T.cuda.is_available() else 'cpu')
             self.q_eval = DuelingDeepQNetworkConv(self.lr, self.n_actions,
                                        input_dims=self.input_dims,
                                        name='lunar_lander_dueling_ddqn_q_eval',
-                                       chkpt_dir=self.chkpt_dir,noisy = self.noisy,
-                                        Vmin=self.Vmin,Vmax=self.Vmax,batch_size=self.batch_size)
+                                       chkpt_dir=self.chkpt_dir,noisy = self.noisy)
 
             self.q_next = DuelingDeepQNetworkConv(self.lr, self.n_actions,
                                        input_dims=self.input_dims,
                                        name='lunar_lander_dueling_ddqn_q_next',
-                                       chkpt_dir=self.chkpt_dir,noisy = self.noisy,
-                                        Vmin=self.Vmin,Vmax=self.Vmax,batch_size=self.batch_size)
-
-    def distr_projection(self,next_distr, rewards, dones):
-        """
-        Perform distribution projection aka Catergorical Algorithm from the
-        "A Distributional Perspective on RL" paper
-        """
-        proj_distr = np.zeros((self.batch_size, self.N_atoms), dtype=np.float32)
-        for atom in range(self.N_atoms):
-            tz_j = np.minimum(self.Vmax, np.maximum(self.Vmin, rewards + (self.Vmin + atom * self.delta_z) * self.gamma_n))
-            b_j = (tz_j - self.Vmin) / self.delta_z
-            l = np.floor(b_j).astype(np.int64)
-            u = np.ceil(b_j).astype(np.int64)
-            eq_mask = u == l
-            proj_distr[eq_mask, l[eq_mask]] += next_distr[eq_mask, atom]
-            ne_mask = u != l
-            proj_distr[ne_mask, l[ne_mask]] += next_distr[ne_mask, atom] * (u - b_j)[ne_mask]
-            proj_distr[ne_mask, u[ne_mask]] += next_distr[ne_mask, atom] * (b_j - l)[ne_mask]
-        if dones.any():
-            proj_distr[dones] = 0.0
-            tz_j = np.minimum(self.Vmax, np.maximum(self.Vmin, rewards[dones]))
-            b_j = (tz_j - self.Vmin) / self.delta_z
-            l = np.floor(b_j).astype(np.int64)
-            u = np.ceil(b_j).astype(np.int64)
-            eq_mask = u == l
-            eq_dones = dones.copy()
-            eq_dones[dones] = eq_mask
-            if eq_dones.any():
-                proj_distr[eq_dones, l[eq_mask]] = 1.0
-            ne_mask = u != l
-            ne_dones = dones.copy()
-            ne_dones[dones] = ne_mask
-            if ne_dones.any():
-                proj_distr[ne_dones, l[ne_mask]] = (u - b_j)[ne_mask]
-                proj_distr[ne_dones, u[ne_mask]] = (b_j - l)[ne_mask]
-        return proj_distr
-        
+                                       chkpt_dir=self.chkpt_dir,noisy = self.noisy)
 
     def choose_action(self, observation):
 
@@ -330,17 +242,17 @@ class Agent():
         if self.image:
                         
             if np.random.random() > self.epsilon:
-                state = T.tensor(np.array([observation],dtype=np.float32),dtype=T.float32).to(self.q_eval.device)
-                q_vals = self.q_eval.qvals(state)
-                action = T.argmax(q_vals).item()
+                state = T.tensor(observation,dtype=T.float32).to(self.q_eval.device)
+                _, advantage = self.q_eval.forward(state)
+                action = T.argmax(advantage).item()
             else:
                 action = np.random.choice(self.action_space)
 
         else:
             if np.random.random() > self.epsilon:
                 state = T.tensor([observation],dtype=T.float32).to(self.q_eval.device)
-                q_vals = self.q_eval.qvals(state)
-                action = T.argmax(q_vals).item()
+                _, advantage = self.q_eval.forward(state)
+                action = T.argmax(advantage).item()
             else:
                 action = np.random.choice(self.action_space)            
 
@@ -455,33 +367,43 @@ class Agent():
             states,actions,rewards,new_states,dones = self.memory.sample_memory()
 
         states = T.tensor(states).to(self.q_eval.device)
-        #rewards = T.tensor(rewards).to(self.q_eval.device)
-        #dones = T.tensor(dones).to(self.q_eval.device)
+        rewards = T.tensor(rewards).to(self.q_eval.device)
+        dones = T.tensor(dones).to(self.q_eval.device)
         actions = T.tensor(actions).to(self.q_eval.device)
         states_ = T.tensor(new_states).to(self.q_eval.device)
 
-        distr_v, qvals_v = self.q_eval.both(T.cat((states, states_)))
-        next_qvals_v = qvals_v[self.batch_size:]
-        distr_v = distr_v[:self.batch_size]
+        indices = np.arange(self.batch_size)
 
-        next_actions_v = next_qvals_v.max(1)[1]
-        next_distr_v = self.q_next(states_)
-        next_best_distr_v = next_distr_v[range(self.batch_size), next_actions_v.data]
-        next_best_distr_v = self.q_next.apply_softmax(next_best_distr_v)
-        next_best_distr = next_best_distr_v.data.cpu().numpy()
+        V_s, A_s = self.q_eval.forward(states)
+        V_s_, A_s_ = self.q_next.forward(states_)
 
-        dones = dones.astype(np.bool)
+        V_s_eval, A_s_eval = self.q_eval.forward(states_)
 
-        proj_distr = self.distr_projection(next_best_distr, rewards, dones)
+        q_pred = T.add(V_s,
+                        (A_s - A_s.mean(dim=1, keepdim=True)))[indices, actions]
+        q_next = T.add(V_s_,
+                        (A_s_ - A_s_.mean(dim=1, keepdim=True)))
 
-        state_action_values = distr_v[range(self.batch_size), actions]
-        state_log_sm_v = F.log_softmax(state_action_values, dim=1)
-        proj_distr_v = T.tensor(proj_distr).to(self.device)
+        q_eval = T.add(V_s_eval, (A_s_eval - A_s_eval.mean(dim=1,keepdim=True)))
 
-        loss_v = -state_log_sm_v * proj_distr_v
-        loss_array = loss_v.sum(dim=1)
+        max_actions = T.argmax(q_eval, dim=1)
 
-        loss = loss_array.mean()
+        q_next[dones] = 0.0
+        q_target = rewards + self.gamma_n*q_next[indices, max_actions]
+
+        #loss = self.q_eval.loss(q_target, q_pred).to(self.q_eval.device)
+
+        if self.memory_type == "ER":
+            loss = self.q_eval.loss(q_target, q_pred).to(self.q_eval.device)
+        else:        
+
+            #remove These for no IS
+            #batch_weights_v = Variable(T.from_numpy(tree_weights))
+            #loss_array = batch_weights_v * (q_pred - q_target) ** 2
+            loss_array = (q_pred - q_target) ** 2
+            loss = loss_array.mean()
+
+            #loss = self.q_eval.loss(q_target, q_pred).to(self.q_eval.device)
         
         loss.backward()
         self.q_eval.optimizer.step()
@@ -497,5 +419,5 @@ class Agent():
             loss_array = T.pow(loss_array,self.memory.alpha)
 
             #update tree priorities
-            self.memory.batch_update(tree_indices, loss_array.data.cpu().numpy())
+            self.memory.batch_update(tree_indices, loss_array.data.cpu().numpy())#.cpu().detach()
 

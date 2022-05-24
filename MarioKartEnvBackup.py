@@ -13,8 +13,6 @@ from Region import Region
 import pickle
 import math
 import keyboard
-#import easyocr
-
 # Bunch of stuff so that the script can send keystrokes to game #
 
 SendInput = ctypes.windll.user32.SendInput
@@ -116,22 +114,18 @@ class MarioKartEnv():
         self.tem_w = 69
         self.tem_h = 132#100,141
 
-        self.action_space = gym.spaces.Discrete(7)
-        self.observation_space = gym.spaces.Box(0.0, 1.0, [32, 64])
-
-        #self.reader = easyocr.Reader(['en'])
+        self.action_space = gym.spaces.Discrete(4)
         """
         
         1 - accel
         2 - accel+wheely
         3 - accel+drift_hold_right
         4 - accel+drift_hold_left
-        5 - accel + right
-        6 - accel + left
-        7 - accel + drift
+
 
         item has been removed
-
+        5 - accel + right
+        6 - accel + left
         7 - accel + item
         0 - null
         """
@@ -147,11 +141,11 @@ class MarioKartEnv():
         self.grid_x = int(self.image_x / self.grid_size)
         self.grid_y = int(self.image_y / self.grid_size)
         
-        self.time_till_checkpoint = 3
-        
+        self.time_till_checkpoint = 4
+        self.checkpoint_timer = time.time()
         
         self.method = eval('cv2.TM_CCOEFF')
-        self.num_chkps = 47 #this is max chkp not num chkp
+        self.num_chkps = 22
         with open(save_name, "rb") as f:
             self.regions = pickle.load(f)
         
@@ -165,7 +159,6 @@ class MarioKartEnv():
         self.held_keys = []
         KeyPress("m")
         time.sleep(0.25)
-        self.checkpoint_timer = time.time()
         self.timer = time.time()
         self.prev_action = 0
         self.out_frames = 0
@@ -211,7 +204,7 @@ class MarioKartEnv():
 
                 #need to allow it to refind template next frame
                 self.first = True
-                reward = 0
+                reward = 0.9
                 bottom_right2 = (self.prev_top_left[0] + self.tem_w, self.prev_top_left[1] + self.tem_h)
                 cv2.rectangle(img,self.prev_top_left, bottom_right2, 255, 2)
                 
@@ -227,7 +220,7 @@ class MarioKartEnv():
                 reward = self.get_reward(x_dif,y_dif)
                 if self.out_frames > 3:
                     terminal = True
-                    reward = -1
+                    reward -= 150
 
                 
                 """bottom_right = (self.top_left[0] + self.tem_w, self.top_left[1] + self.tem_h)
@@ -238,6 +231,9 @@ class MarioKartEnv():
                 
         else:
             return 0,terminal
+
+        reward = reward / 30
+        reward -= 0.03
 
         return reward,terminal
 
@@ -265,15 +261,15 @@ class MarioKartEnv():
             reset_frames = False
 
         #check dir_x
-        #reward += x_dif * self.regions[num].dir_x
+        reward += x_dif * self.regions[num].dir_x
 
         #check dir_y
-        #reward -= y_dif * self.regions[num].dir_y
+        reward -= y_dif * self.regions[num].dir_y
 
         #checkpoints
         if self.regions[num].is_chkp:
             if self.regions[num].chkp_num > self.current_chkp or (self.regions[num].chkp_num == 0 and self.current_chkp == self.num_chkps):
-                reward += 1
+                reward += 65
                 self.checkpoint_timer = time.time()
                 #print("checkpoint: " + str(self.regions[num].chkp_num))
                 self.current_chkp = self.regions[num].chkp_num
@@ -300,7 +296,8 @@ class MarioKartEnv():
         for i in range(2):
             if not (point[i] >= reg_point[i] and point[i] <= reg_end_point[i]):
                 return False
-        return True        
+        return True
+        
 
     def get_state(self):
         hwndDC = win32gui.GetWindowDC(self.hwnd)
@@ -331,15 +328,13 @@ class MarioKartEnv():
         #gets the top_left var
         im = cv2.cvtColor(im, cv2.COLOR_BGR2GRAY)
         reward,terminal = self.template_match(im)
-        """if not terminal:
-            terminal = self.check_finish(im)"""
+        
         
         im = im[80:, 85: 3868 - 85]
         
         im = cv2.resize(im, (64,32), interpolation = cv2.INTER_AREA)
         #cv2.imwrite("bug_test_ai" + str(time.time()) + ".jpg", im)
         #raise Exception("stop")
-        im = self.process_frame(im)
 
         win32gui.DeleteObject(saveBitMap.GetHandle())
         saveDC.DeleteDC()
@@ -347,25 +342,6 @@ class MarioKartEnv():
         win32gui.ReleaseDC(self.hwnd, hwndDC)
 
         return im,reward,terminal
-
-    """def check_finish(self,im):
-        terminal = False
-
-        #crop image
-        im = im[200:341, 3073: 3554]
-        thresh, im = cv2.threshold(im, 125, 255, cv2.THRESH_BINARY)
-
-         # need to run only once to load model into memory
-        string = self.reader.readtext(im, allowlist='0123456789')
-        
-        print("hi")
-        print(string)
-        #cv2.imwrite("timer_check" + str(time.time()) + ".jpg", im)
-        if np.random.random() > 0.99:
-            raise Exception("stop")
-
-
-        return terminal"""
 
     def step(self,action=0):
         #time.sleep(0.005)
@@ -383,10 +359,7 @@ class MarioKartEnv():
 
         return state,reward,terminal,info
 
-    def process_frame(self,frame):
-        #could try using half precision if needed
-        frame = np.true_divide(frame, 255).astype(np.float32)
-        return frame        
+        
 
     def apply_action(self,action):
         """
@@ -408,21 +381,19 @@ class MarioKartEnv():
         
         """if action == 0:
             self.held_keys = []"""
-        if action == 1:#0
+        if action == 1:
             self.held_keys = ["w"]
-        elif action == 2:#1
+        elif action == 2:
             self.held_keys = ["w","e"]
-        elif action == 3:#2
+        elif action == 3:
             self.held_keys = ["w","c","d"]
-        elif action == 4:#3
+        elif action == 4:
             self.held_keys = ["w","c","a"]
-        elif action == 5:#4
+        """elif action == 5:
             self.held_keys = ["w","d"]
-        elif action == 6:#5
+        elif action == 6:
             self.held_keys = ["w","a"]
-        elif action == 7:#6
-            self.held_keys = ["w","c"]
-        """elif action == 7:
+        elif action == 7:
             self.held_keys = ["w","z"]"""
 
         for i in self.held_keys:
@@ -444,18 +415,14 @@ if __name__ == "__main__":
     
     while True:
 
-        if keyboard.is_pressed('i'):
-            action = 1
-        elif keyboard.is_pressed('k') and keyboard.is_pressed('n'):
-            action = 2
-        elif keyboard.is_pressed('h') and keyboard.is_pressed('n'):
+        if keyboard.is_pressed('u'):
+            action = 0
+        elif keyboard.is_pressed('h'):
             action = 3
         elif keyboard.is_pressed('k'):
-            action = 4
-        elif keyboard.is_pressed('h'):
-            action = 5
-        elif keyboard.is_pressed('n'):
-            action = 6
+            action = 2
+        elif keyboard.is_pressed('i'):
+            action = 1
         else:
             action = 0
 

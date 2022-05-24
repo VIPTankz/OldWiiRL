@@ -57,6 +57,8 @@ class RegionMaker():
         self.in_bounds = False
         self.brush_size = 2
 
+        self.chkp_button_count = 204
+
         
         self.define_buttons()
         self.define_chkp_buttons()
@@ -119,12 +121,12 @@ class RegionMaker():
             
     def define_chkp_buttons(self):
         self.chkp_buttons = []
-        for i in range(31):
+        for i in range(self.chkp_button_count):
             i -= 1
             if self.chkp_num == i:
-                self.chkp_buttons.append(Button(1550,500 + i * 25,150,25,(0,128,0),(0,255,0),text = str(i)))
+                self.chkp_buttons.append(Button(1500 + math.floor((i+1)/51) * 75,320 + i * 20 - math.floor((i+1)/51) * 1020,75,20,(0,128,0),(0,255,0),text = str(i)))
             else:
-                self.chkp_buttons.append(Button(1550,500 + i * 25,150,25,(128,128,128),(0,255,0),text = str(i)))
+                self.chkp_buttons.append(Button(1500 + math.floor((i+1)/51) * 75,320 + i * 20 - math.floor((i+1)/51) * 1020,75,20,(128,128,128),(0,255,0),text = str(i)))
 
     def define_buttons(self):
         button_width = 420

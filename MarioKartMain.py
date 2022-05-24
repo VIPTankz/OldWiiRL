@@ -12,10 +12,10 @@ if __name__ == '__main__':
     save_interval = 400
     load_checkpoint = False
 
-    agent = Agent(gamma=0.99, epsilon=1, batch_size=32, n_actions=4,
+    agent = Agent(gamma=0.99, epsilon=1, batch_size=32, n_actions=7,
                       eps_end=0.1, input_dims=[4,32,64], lr=6.25e-5,
                       max_mem_size=1000000,memory = "PER",image = True,
-                      learning_starts=25000,replace=12000,preprocess = True,
+                      learning_starts=50000,replace=16000,preprocess = True,
                       n_step = 4,noisy = True,action_repeat=1)
 
 

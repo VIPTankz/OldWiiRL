@@ -1,7 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
-filename = "results1.npy"
+filename = "results.npy"
 
 arr = np.load(filename)
 #print(arr)
