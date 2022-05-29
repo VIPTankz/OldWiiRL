@@ -13,7 +13,26 @@ from Region import Region
 import pickle
 import math
 import keyboard
-#import easyocr
+import dxcam
+from operator import add
+
+"""
+To replace
+
+actions
+
+increase lr slightly??
+
+Template match has HUGE impact on total speed
+try to use smaller window if possible
+or if not possible get faster template matching
+
+Need to actually implement the region maker
+
+the distance code is redundant, can be removed
+look for other stuff to remove
+
+"""
 
 # Bunch of stuff so that the script can send keystrokes to game #
 
@@ -93,7 +112,8 @@ keys = {
     "e": 0x12,
     "z": 0x2C,
     "c": 0x2E,
-    "d": 0x20
+    "d": 0x20,
+    "f2": 0x3C
     }
 
 #32400 frames/hour!
@@ -101,25 +121,25 @@ keys = {
 class MarioKartEnv():
     def __init__(self,config=None):
 
-        windows = Desktop(backend="uia").windows()
-        for i in windows:
-            if i.window_text()[:19] == "Dolphin 5.0-16101 |":
-                window_name = i.window_text()
+        #self.template = cv2.imread('funky_kong_img2.png')
+        #self.template = cv2.cvtColor(self.template, cv2.COLOR_RGB2GRAY)
 
-        self.hwnd = win32gui.FindWindow(None, window_name)
-        left, top, right, bot = win32gui.GetWindowRect(self.hwnd)
-        self.w = right - left
-        self.h = bot - top
+        self.template = cv2.imread('funky_kong_img3.jpg')
+        self.template = cv2.cvtColor(self.template, cv2.COLOR_BGR2GRAY)
+        self.match_size = 100 #this is in each direction
 
-        self.template = cv2.imread('C:/Users/TYLER/Downloads/dolphin_ai_tests/env/funky_kong_img2.png')
-        self.template = cv2.cvtColor(self.template, cv2.COLOR_RGB2GRAY)
-        self.tem_w = 69
-        self.tem_h = 132#100,141
+        #self.orb = cv2.ORB_create() #could look into this
+        
+        self.tem_w = 36
+        self.tem_h = 61
 
         self.action_space = gym.spaces.Discrete(7)
-        self.observation_space = gym.spaces.Box(0.0, 1.0, [32, 64])
-
-        #self.reader = easyocr.Reader(['en'])
+        self.observation_space = gym.spaces.Box(0.0, 1.0, [52, 96])
+        self.reward_range = [-1,1]
+        self.metadata = None
+        
+        self.camera = dxcam.create(max_buffer_len=1)
+        
         """
         
         1 - accel
@@ -141,103 +161,129 @@ class MarioKartEnv():
 
         save_name = "regions.dat"
 
-        self.image_x = 950
-        self.image_y = 1220
+        #this should be the same for every map
+        self.image_x = 620
+        self.image_y = 660
+        
         self.grid_size = 10
         self.grid_x = int(self.image_x / self.grid_size)
         self.grid_y = int(self.image_y / self.grid_size)
         
-        self.time_till_checkpoint = 3
         
         
         self.method = eval('cv2.TM_CCOEFF')
-        self.num_chkps = 47 #this is max chkp not num chkp
+
+        
         with open(save_name, "rb") as f:
             self.regions = pickle.load(f)
-        
-        self.reset()
 
+        self.num_chkps = 1 #this is max chkp not num chkp
+        for i in self.regions:
+            if i.chkp_num > self.num_chkps:
+                self.num_chkps = i.chkp_num
+
+        self.total_chkps = self.num_chkps * 3 + 2
+
+        #1720x930
+        self.reset()
 
     def reset(self):
         self.dist = 0
+        self.time_till_checkpoint = 1.8
         self.first = True
         release_keys()
         self.held_keys = []
-        KeyPress("m")
+        KeyPress("m") #NEED TO RE-ADD
+        #KeyPress("f2")
         time.sleep(0.25)
         self.checkpoint_timer = time.time()
         self.timer = time.time()
         self.prev_action = 0
         self.out_frames = 0
         self.current_chkp = -1
+        self.chkp_count = 0
 
         return self.get_state()[0]
 
     def template_match(self,img):
         terminal = False
         #crop image so avoid issues -- #og image 2098, 3868
-        img = img[680:1900, 2600: 3550]
-        #img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         
+        img = img[270:,\
+                     1100:]
+        #This is 660x620
+
         
-        # Apply template Matching
-        res = cv2.matchTemplate(img,self.template,self.method)
-        min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(res)
-        # If the method is TM_SQDIFF or TM_SQDIFF_NORMED, take minimum
+        #print map region code
+        """
+        cv2.imwrite("map_region_moo.jpg", img)
+        raise Exception("stop")
+        """
+        
 
         if not self.first:
             
             self.prev_top_left = copy(self.top_left)
 
-        self.top_left = max_loc
+            #windowed template matching
+            window_top_left = [max(self.prev_center[0] - self.match_size,0),max(self.prev_center[1] - self.match_size,0)]
+            match_img = img[window_top_left[1]:min(self.prev_center[1] + self.match_size,620),\
+                            window_top_left[0]:min(self.prev_center[0] + self.match_size,660)]
 
-        if self.first:
-            self.prev_top_left = copy(self.top_left)
-            self.first = False
-            #cv2.imwrite("bug_test" + str(time.time()) + ".jpg", img)
-            return 0,False
+            #cv2.imwrite("match" + str(round(time.time(),4)) + ".jpg", match_img)
             
-        else:
+            res = cv2.matchTemplate(match_img,self.template,self.method)#img
+            min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(res)
+
+            #elementwise addition of two lists
+            self.top_left = list(map(add, window_top_left,list(max_loc)))
 
             y_dif = list(self.prev_top_left)[1] - list(self.top_left)[1]
             x_dif = list(self.top_left)[0] - list(self.prev_top_left)[0]
-
-        if True:#time.time() - self.timer > 5.4
-        
-            self.dist = x_dif**2 + y_dif**2
-
-            #exception for broken template matching
-            if self.dist > 950:
-
-                #need to allow it to refind template next frame
-                self.first = True
-                reward = 0
-                bottom_right2 = (self.prev_top_left[0] + self.tem_w, self.prev_top_left[1] + self.tem_h)
-                cv2.rectangle(img,self.prev_top_left, bottom_right2, 255, 2)
-                
-                bottom_right = (self.top_left[0] + self.tem_w, self.top_left[1] + self.tem_h)
-                cv2.rectangle(img,self.top_left, bottom_right, 255, 2)
-                
-                cv2.imwrite("wrong_pattern12" + str(round(time.time(),4)) + ".jpg", img)
-
-                self.dist = 0
-            else:
-
-                #region code - #cropped image 1220, 880 (y,x)
-                reward = self.get_reward(x_dif,y_dif)
-                if self.out_frames > 3:
-                    terminal = True
-                    reward = -1
-
-                
-                """bottom_right = (self.top_left[0] + self.tem_w, self.top_left[1] + self.tem_h)
-                cv2.rectangle(img,self.top_left, bottom_right, 128, 2)
-                cv2.imwrite("bug_test" + str(time.time()) + ".jpg", img)
-
-                raise Exception("stop")"""
-                
         else:
-            return 0,terminal
+
+            #full template matching for first time
+            res = cv2.matchTemplate(img,self.template,self.method)#img
+            min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(res)
+            self.top_left = max_loc
+            self.prev_top_left = copy(self.top_left)
+            self.prev_center = [self.prev_top_left[0] + int(self.tem_w / 2),\
+                                self.prev_top_left[1] + int(self.tem_h / 2)]
+            
+            self.first = False
+            return 0,False
+
+    
+        self.dist = x_dif**2 + y_dif**2
+
+        #exception for broken template matching
+        if self.dist > 950:#
+
+            #need to allow it to refind template next frame
+            self.first = True
+            reward = 0
+            bottom_right2 = (self.prev_top_left[0] + self.tem_w, self.prev_top_left[1] + self.tem_h)
+            cv2.rectangle(img,self.prev_top_left, bottom_right2, 255, 2)
+            
+            bottom_right = (self.top_left[0] + self.tem_w, self.top_left[1] + self.tem_h)
+            cv2.rectangle(img,self.top_left, bottom_right, 255, 2)
+            
+            #cv2.imwrite("match_error" + str(round(time.time(),1)) + ".jpg", img)
+
+            self.dist = 0
+        else:
+
+            #region code - #cropped image 1220, 880 (y,x)
+            reward = self.get_reward(x_dif,y_dif)
+            if self.out_frames > 3:
+                terminal = True
+                reward = -1
+            
+            """bottom_right = (self.top_left[0] + self.tem_w, self.top_left[1] + self.tem_h)
+            cv2.rectangle(img,self.top_left, bottom_right, 128, 2)
+            cv2.imwrite("bug_test" + str(time.time()) + ".jpg", img)
+
+            raise Exception("stop")"""
 
         return reward,terminal
 
@@ -252,6 +298,7 @@ class MarioKartEnv():
         #center location
         x = self.top_left[0] + add_x
         y = self.top_left[1] + add_y
+        self.prev_center = [x,y]
 
         x = math.floor(x / self.grid_size)
         y = math.floor(y / self.grid_size)
@@ -273,21 +320,30 @@ class MarioKartEnv():
         #checkpoints
         if self.regions[num].is_chkp:
             if self.regions[num].chkp_num > self.current_chkp or (self.regions[num].chkp_num == 0 and self.current_chkp == self.num_chkps):
-                reward += 1
+                reward += 1 #replace this
+                self.chkp_count += 1
                 self.checkpoint_timer = time.time()
-                #print("checkpoint: " + str(self.regions[num].chkp_num))
                 self.current_chkp = self.regions[num].chkp_num
+                if self.current_chkp == self.num_chkps:
+                    #lap complete
+                    self.time_till_checkpoint -= 0.25
+                    
+            """
             elif self.regions[num].chkp_num < self.current_chkp or \
                  (self.regions[num].chkp_num == self.num_chkps and (self.current_chkp == 0 or self.current_chkp == -1)):
                 
                 self.out_frames += 1
-                reset_frames = False        
+                reset_frames = False
+            """
         
         if reset_frames:
             self.out_frames = 0
 
         #timer for reaching checkpoints
         if time.time() - self.checkpoint_timer > self.time_till_checkpoint:
+            self.out_frames = 10
+
+        if self.chkp_count > self.total_chkps:
             self.out_frames = 10
             
         return reward
@@ -303,69 +359,40 @@ class MarioKartEnv():
         return True        
 
     def get_state(self):
-        hwndDC = win32gui.GetWindowDC(self.hwnd)
-        mfcDC  = win32ui.CreateDCFromHandle(hwndDC)
-        saveDC = mfcDC.CreateCompatibleDC()
 
-        saveBitMap = win32ui.CreateBitmap()
-        saveBitMap.CreateCompatibleBitmap(mfcDC, self.w, self.h)
-
-        saveDC.SelectObject(saveBitMap)
-
-        # Change the line below depending on whether you want the whole window
-        # or just the client area. 
-        #result = windll.user32.PrintWindow(hwnd, saveDC.GetSafeHdc(), 1)
-        result = windll.user32.PrintWindow(self.hwnd, saveDC.GetSafeHdc(), 0)
-
-        bmpinfo = saveBitMap.GetInfo()
-        bmpstr = saveBitMap.GetBitmapBits(True)
-
-        im = Image.frombuffer(
-            'RGB',
-            (bmpinfo['bmWidth'], bmpinfo['bmHeight']),
-            bmpstr, 'raw', 'BGRX', 0, 1)#
-
-        #og image 2098, 3868
-        im = np.array(im)
+        #self.camera.start(region=(100, 70, 1820, 1000),target_fps=60)
+        
+        im = self.camera.grab()
+        while im is None:
+            im = self.camera.grab()
+        im = im[70:1000,100:1820]
+        #cv2.imwrite("test0" + str(time.time()) + ".jpg", im)
+        #raise Exception("akshf")
         
         #gets the top_left var
         im = cv2.cvtColor(im, cv2.COLOR_BGR2GRAY)
-        reward,terminal = self.template_match(im)
-        """if not terminal:
-            terminal = self.check_finish(im)"""
+
+
+        #check gone off edge - this should be replaced tho with lower point
+        if im[178,1483] == 0:
+            terminal = True
+            reward = -1
+        else:
+            terminal = False
+
+
+        if not terminal:
+            reward,terminal = self.template_match(im)
+
+
+        #im = im[80:, 85: 3868 - 85]
         
-        im = im[80:, 85: 3868 - 85]
-        
-        im = cv2.resize(im, (64,32), interpolation = cv2.INTER_AREA)
-        #cv2.imwrite("bug_test_ai" + str(time.time()) + ".jpg", im)
-        #raise Exception("stop")
+        im = cv2.resize(im, (96,52), interpolation = cv2.INTER_AREA)
+        #cv2.imwrite("test1" + str(time.time()) + ".jpg", im)
         im = self.process_frame(im)
 
-        win32gui.DeleteObject(saveBitMap.GetHandle())
-        saveDC.DeleteDC()
-        mfcDC.DeleteDC()
-        win32gui.ReleaseDC(self.hwnd, hwndDC)
 
         return im,reward,terminal
-
-    """def check_finish(self,im):
-        terminal = False
-
-        #crop image
-        im = im[200:341, 3073: 3554]
-        thresh, im = cv2.threshold(im, 125, 255, cv2.THRESH_BINARY)
-
-         # need to run only once to load model into memory
-        string = self.reader.readtext(im, allowlist='0123456789')
-        
-        print("hi")
-        print(string)
-        #cv2.imwrite("timer_check" + str(time.time()) + ".jpg", im)
-        if np.random.random() > 0.99:
-            raise Exception("stop")
-
-
-        return terminal"""
 
     def step(self,action=0):
         #time.sleep(0.005)
@@ -375,10 +402,6 @@ class MarioKartEnv():
         #press some key
         state,reward,terminal = self.get_state()
 
-        if time.time() - self.timer > 80:
-            terminal = True
-
-        #print(reward)
         info = {}
 
         return state,reward,terminal,info
@@ -441,8 +464,10 @@ if __name__ == "__main__":
     state = env.reset()
     score = 0
     action = 0
-    
+    steps = 0
+    starter = time.time()
     while True:
+        steps += 1
 
         if keyboard.is_pressed('i'):
             action = 1
@@ -459,10 +484,18 @@ if __name__ == "__main__":
         else:
             action = 0
 
-            
+        
         state,reward,terminal,info = env.step(action)
+
+        if steps % 500 == 0:
+            print("Frames per Hour:")
+            time_seg = 500 / (time.time() - starter)
+            
+            print(time_seg * 3600)
+            starter = time.time()
+        
         score += reward
-        print(reward)
+        #print(reward)
         if terminal:
             print("Total Reward: " + str(score))
             score = 0

@@ -16,15 +16,13 @@ from ButtonLib import Button
 #test load/save
 
 
-
-
 #implement into main!
 
 class RegionMaker():
     def __init__(self):
         pygame.init()
         self.clock = pygame.time.Clock()
-        self.screen = pygame.display.set_mode((1820,1340))
+        self.screen = pygame.display.set_mode((1820,1000))
         all_fonts = pygame.font.get_fonts()
         self.font = pygame.font.SysFont(all_fonts[7], 45)
         self.top_font = pygame.font.SysFont(all_fonts[7], 30)
@@ -32,10 +30,10 @@ class RegionMaker():
         self.running = True
         self.mouse_up = False
 
-        self.map = pygame.image.load("blank_regions.jpg").convert() #950x1220
+        self.map = pygame.image.load("map_region_luigi.jpg").convert() #950x1220
 
-        self.image_x = 950
-        self.image_y = 1220
+        self.image_x = self.map.get_width()
+        self.image_y = self.map.get_height()
 
         self.start_x = 50
         self.start_y = 50
@@ -57,12 +55,11 @@ class RegionMaker():
         self.in_bounds = False
         self.brush_size = 2
 
-        self.chkp_button_count = 204
-
+        self.chkp_button_count = 251
         
         self.define_buttons()
         self.define_chkp_buttons()
-        self.define_dir_buttons()
+        #self.define_dir_buttons()
         self.define_brush_buttons()
         self.define_bound_buttons()
         self.define_saving_buttons()
@@ -89,14 +86,14 @@ class RegionMaker():
         for i in range(2):
             if i == 0:
                 if self.in_bounds:
-                    self.bound_buttons.append(Button(1100,350,200,50,(0,128,0),(0,255,0),text = texts[i]))
+                    self.bound_buttons.append(Button(1100,300,200,25,(0,128,0),(0,255,0),text = texts[i]))
                 else:
-                    self.bound_buttons.append(Button(1100,350,200,50,(128,128,128),(0,255,0),text = texts[i]))
+                    self.bound_buttons.append(Button(1100,300,200,25,(128,128,128),(0,255,0),text = texts[i]))
             else:
                 if self.in_bounds:
-                    self.bound_buttons.append(Button(1100,400,200,50,(128,128,128),(0,255,0),text = texts[i]))
+                    self.bound_buttons.append(Button(1100,325,200,25,(128,128,128),(0,255,0),text = texts[i]))
                 else:
-                    self.bound_buttons.append(Button(1100,400,200,50,(0,128,0),(0,255,0),text = texts[i]))                     
+                    self.bound_buttons.append(Button(1100,325,200,25,(0,128,0),(0,255,0),text = texts[i]))                     
 
     def define_brush_buttons(self):
         self.brush_buttons = []
@@ -124,26 +121,27 @@ class RegionMaker():
         for i in range(self.chkp_button_count):
             i -= 1
             if self.chkp_num == i:
-                self.chkp_buttons.append(Button(1500 + math.floor((i+1)/51) * 75,320 + i * 20 - math.floor((i+1)/51) * 1020,75,20,(0,128,0),(0,255,0),text = str(i)))
+                self.chkp_buttons.append(Button(1010 + math.floor((i+1)/26) * 75,475 + i * 20 - math.floor((i+1)/26) * 520,75,20,(0,128,0),(0,255,0),text = str(i)))
             else:
-                self.chkp_buttons.append(Button(1500 + math.floor((i+1)/51) * 75,320 + i * 20 - math.floor((i+1)/51) * 1020,75,20,(128,128,128),(0,255,0),text = str(i)))
+                self.chkp_buttons.append(Button(1010 + math.floor((i+1)/26) * 75,475 + i * 20 - math.floor((i+1)/26) * 520,75,20,(128,128,128),(0,255,0),text = str(i)))
 
     def define_buttons(self):
         button_width = 420
         self.bound_button = Button(1050,200,button_width,100,(128,128,128),(0,255,0),text = "Bounds")
-        self.x_button = Button(1050,500,button_width,100,(128,128,128),(0,255,0),text = "X Direction (green is right)")
-        self.y_button = Button(1050,800,button_width,100,(128,128,128),(0,255,0),text = "Y Direction (green is up)")
-        self.chkp_button = Button(1050,1100,button_width,100,(128,128,128),(0,255,0),text = "Checkpoints")
+        #self.x_button = Button(1050,500,button_width,100,(128,128,128),(0,255,0),text = "X Direction (green is right)")
+        #self.y_button = Button(1050,800,button_width,100,(128,128,128),(0,255,0),text = "Y Direction (green is up)")
+        self.chkp_button = Button(1050,350,button_width,100,(128,128,128),(0,255,0),text = "Checkpoints")
 
         if self.mode == "bounds":
             self.bound_button = Button(1050,200,button_width,100,(0,128,0),(0,255,0),text = "Bounds")
+        elif self.mode == "chkp":
+            self.chkp_button = Button(1050,350,button_width,100,(0,128,0),(0,255,0),text = "Checkpoints")
+        """
         elif self.mode == "x":
             self.x_button = Button(1050,500,button_width,100,(0,128,0),(0,255,0),text = "X Direction (green is right)")
         elif self.mode == "y":
             self.y_button = Button(1050,800,button_width,100,(0,128,0),(0,255,0),text = "Y Direction (green is up)")
-        elif self.mode == "chkp":
-            self.chkp_button = Button(1050,1100,button_width,100,(0,128,0),(0,255,0),text = "Checkpoints")
-             
+        """
 
     def create_regions(self):
         self.regions = []
@@ -371,40 +369,40 @@ class RegionMaker():
 
         if self.mode == "bounds":
             self.show_bounds()
-        elif self.mode == "x":
-            self.show_x()
-        elif self.mode == "y":
-            self.show_y()
         elif self.mode == "chkp":
             self.show_chkp()
+        """elif self.mode == "x":
+            self.show_x()
+        elif self.mode == "y":
+            self.show_y()"""
         
         self.draw_grid()
 
         self.process_clicks(mouse_pos)
 
         self.bound_button.create(self.screen)
-        self.x_button.create(self.screen)
-        self.y_button.create(self.screen)
+        #self.x_button.create(self.screen)
+        #self.y_button.create(self.screen)
         self.chkp_button.create(self.screen)
 
         if self.bound_button.click(mouse_pos,self.mouse_up):
             self.mode = "bounds"
             self.define_buttons()
-        elif self.x_button.click(mouse_pos,self.mouse_up):
+        elif self.chkp_button.click(mouse_pos,self.mouse_up):
+            self.mode = "chkp"
+            self.define_buttons()
+        """elif self.x_button.click(mouse_pos,self.mouse_up):
             self.mode = "x"
             self.define_buttons()
         elif self.y_button.click(mouse_pos,self.mouse_up):
             self.mode = "y"
-            self.define_buttons()
-        elif self.chkp_button.click(mouse_pos,self.mouse_up):
-            self.mode = "chkp"
-            self.define_buttons()
+            self.define_buttons()"""
 
-        for i in range(len(self.dir_buttons)):
+        """for i in range(len(self.dir_buttons)):
             self.dir_buttons[i].create(self.screen)
             if self.dir_buttons[i].click(mouse_pos,self.mouse_up):
                 self.dir_num = i - 3
-                self.define_dir_buttons()
+                self.define_dir_buttons()"""
 
         for i in range(len(self.chkp_buttons)):
             self.chkp_buttons[i].create(self.screen)

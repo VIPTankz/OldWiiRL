@@ -69,8 +69,8 @@ class DuelingDeepQNetworkConv(nn.Module):
             self.V = nn.Linear(512, 1 * atoms)
             self.A = nn.Linear(512, n_actions * atoms)
         else:
-            self.fcA = NoisyLinear(64*6*2, 512)
-            self.fcV = NoisyLinear(64*6*2, 512)
+            self.fcA = NoisyLinear(64*10*4, 512)
+            self.fcV = NoisyLinear(64*10*4, 512)
             self.V = NoisyLinear(512, 1 * atoms)
             self.A = NoisyLinear(512, n_actions * atoms)
 
@@ -88,12 +88,12 @@ class DuelingDeepQNetworkConv(nn.Module):
 
     def forward(self,state):
         input_size = len(state)
-        observation = state.view(-1, 4, 64, 32)
+        observation = state.view(-1, 4, 96, 52)
         observation = F.relu(self.conv1(observation))
         observation = F.relu(self.conv2(observation))
         observation = F.relu(self.conv3(observation))
 
-        observation = observation.view(-1, 64*6*2)
+        observation = observation.view(-1, 64*10*4)
         
         flatA = F.relu(self.fcA(observation))#problem is here
         flatV = F.relu(self.fcV(observation))
@@ -192,7 +192,7 @@ class Agent():
                  replace=100,image = False,framestack = True,learning_starts=10000,
                  preprocess = True,n_step = False,noisy=False,action_repeat=1):
 
-        #self.temp_timer = time.time()
+        self.temp_timer = time.time()
         
         self.gamma = gamma
         self.epsilon = epsilon
@@ -432,10 +432,9 @@ class Agent():
 
     def learn(self):
         
-        """if self.memory.mem_cntr % 32 == 31:
-            print((time.time() - self.temp_timer)/32)
-            self.temp_timer = time.time()"""
-        
+        if self.memory.mem_cntr % 256 == 255:
+            print("Frames per hour: " + str(3600 / ((time.time() - self.temp_timer)/256)))
+            self.temp_timer = time.time()
         
         if self.memory.mem_cntr < self.learning_starts:
             return

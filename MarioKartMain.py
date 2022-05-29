@@ -13,9 +13,9 @@ if __name__ == '__main__':
     load_checkpoint = False
 
     agent = Agent(gamma=0.99, epsilon=1, batch_size=32, n_actions=7,
-                      eps_end=0.1, input_dims=[4,32,64], lr=6.25e-5,
-                      max_mem_size=1000000,memory = "PER",image = True,
-                      learning_starts=50000,replace=16000,preprocess = True,
+                      eps_end=0.1, input_dims=[4,52,96], lr=1e-4,
+                      max_mem_size=50000,memory = "PER",image = True,
+                      learning_starts=32,replace=16000,preprocess = True,
                       n_step = 4,noisy = True,action_repeat=1)
 
 
@@ -28,6 +28,11 @@ if __name__ == '__main__':
     start = time.time()
     i = -1
     arr = []
+
+    act_time = 0
+    step_time = 0
+    learn_time = 0
+    
     while True:
         done = False
         observation = env.reset()
@@ -39,14 +44,19 @@ if __name__ == '__main__':
         while not done:
             steps += 1
             action = agent.choose_action(observation)
+
             observation_, reward, done, info = env.step(action)
+            
             observation_ = np.stack( observation_, axis=0)
             score += reward
+
             agent.store_transition(observation, action,
                                     reward, observation_, int(done))
+
             agent.learn()
 
             observation = observation_
+
 
         arr.append([score,i,steps,round(time.time() - start,4),agent.epsilon])
         if i % save_interval == save_interval - 1:
